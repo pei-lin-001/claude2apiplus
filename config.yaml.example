@@ -37,3 +37,53 @@ promptDisableArtifacts: false
 # Mirror API settings
 enableMirrorApi: false
 mirrorApiPrefix: ""
+
+# ===== 智能Session管理器配置 =====
+sessionManager:
+  # 是否启用智能Session管理器 (默认: false, 保持向后兼容)
+  enabled: true
+  
+  # 调度策略 (默认: "round_robin")
+  # 可选值: "round_robin", "health_priority", "weighted", "adaptive"
+  scheduleStrategy: "health_priority"
+  
+  # 健康检查间隔时间 (默认: 30s)
+  healthCheckInterval: "30s"
+  
+  # 最低健康度分数 (0.0-1.0, 默认: 0.5)
+  # 低于此分数的session将被标记为不可用
+  minHealthScore: 0.5
+  
+  # 是否启用熔断器 (默认: true)
+  circuitBreakerEnabled: true
+  
+  # 最大重试次数 (默认: 3)
+  maxRetryAttempts: 3
+  
+  # 不同错误类型的冷却时间配置
+  cooldownPeriods:
+    rate_limit: "5m"     # 限流错误: 5分钟
+    auth: "30m"          # 认证错误: 30分钟  
+    server: "1m"         # 服务器错误: 1分钟
+    network: "30s"       # 网络错误: 30秒
+    timeout: "10s"       # 超时错误: 10秒
+
+# ===== 高级配置选项 =====
+# 以下配置项为可选，通常使用默认值即可
+
+# Session权重配置 (仅在weighted策略下生效)
+# sessionWeights:
+#   "your_session_key_1": 2.0
+#   "your_session_key_2": 1.0
+
+# 熔断器配置
+# circuitBreaker:
+#   failureThreshold: 5        # 失败阈值 (默认: 5)
+#   resetTimeout: "1m"         # 重置超时 (默认: 60s)
+#   halfOpenMaxCalls: 3        # 半开状态最大调用次数 (默认: 3)
+
+# 监控配置  
+# monitoring:
+#   metricsEnabled: true       # 启用监控指标
+#   detailedLogs: false        # 详细日志记录
+#   statisticsRetention: "24h" # 统计信息保留时间

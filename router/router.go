@@ -20,6 +20,16 @@ func SetupRoutes(r *gin.Engine) {
 	r.POST("/v1/chat/completions", service.ChatCompletionsHandler)
 	r.GET("/v1/models", service.MoudlesHandler)
 
+	// Admin routes for session management
+	admin := r.Group("/admin")
+	{
+		admin.GET("/sessions", service.SessionsHealthHandler)
+		admin.GET("/sessions/:key", service.SessionDetailHandler)
+		admin.POST("/sessions/:key/reset", service.ResetSessionHandler)
+		admin.GET("/stats", service.SessionStatsHandler)
+		admin.GET("/config", service.ConfigHandler)
+	}
+
 	if config.ConfigInstance.EnableMirrorApi {
 		r.POST(config.ConfigInstance.MirrorApiPrefix+"/v1/chat/completions", service.MirrorChatHandler)
 		r.GET(config.ConfigInstance.MirrorApiPrefix+"/v1/models", service.MoudlesHandler)

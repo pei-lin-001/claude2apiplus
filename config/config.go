@@ -15,6 +15,36 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// ErrorType 错误类型枚举
+type ErrorType int
+
+const (
+	ErrorOther ErrorType = iota
+	ErrorRateLimit
+	ErrorAuth
+	ErrorServer
+	ErrorNetwork
+	ErrorTimeout
+)
+
+// String 实现String接口
+func (e ErrorType) String() string {
+	switch e {
+	case ErrorRateLimit:
+		return "rate_limit"
+	case ErrorAuth:
+		return "auth"
+	case ErrorServer:
+		return "server"
+	case ErrorNetwork:
+		return "network"
+	case ErrorTimeout:
+		return "timeout"
+	default:
+		return "other"
+	}
+}
+
 type SessionInfo struct {
 	SessionKey string `yaml:"sessionKey"`
 	OrgID      string `yaml:"orgID"`
@@ -25,19 +55,45 @@ type SessionRagen struct {
 	Mutex sync.Mutex
 }
 
+// SessionManagerConfig SessionManager配置
+type SessionManagerConfig struct {
+	Enabled                bool                   `yaml:"enabled"`
+	ScheduleStrategy       string                `yaml:"scheduleStrategy"` // "round_robin", "health_priority", "weighted"
+	HealthCheckInterval    time.Duration         `yaml:"healthCheckInterval"`
+	MinHealthScore         float64               `yaml:"minHealthScore"`
+	CircuitBreakerEnabled  bool                  `yaml:"circuitBreakerEnabled"`
+	MaxRetryAttempts       int                   `yaml:"maxRetryAttempts"`
+	CooldownPeriods        map[string]time.Duration `yaml:"cooldownPeriods"`
+}
+
 type Config struct {
-	Sessions               []SessionInfo `yaml:"sessions"`
-	Address                string        `yaml:"address"`
-	APIKey                 string        `yaml:"apiKey"`
-	Proxy                  string        `yaml:"proxy"`
-	ChatDelete             bool          `yaml:"chatDelete"`
-	MaxChatHistoryLength   int           `yaml:"maxChatHistoryLength"`
-	RetryCount             int           `yaml:"retryCount"`
-	NoRolePrefix           bool          `yaml:"noRolePrefix"`
-	PromptDisableArtifacts bool          `yaml:"promptDisableArtifacts"`
-	EnableMirrorApi        bool          `yaml:"enableMirrorApi"`
-	MirrorApiPrefix        string        `yaml:"mirrorApiPrefix"`
-	RwMutx                 sync.RWMutex  `yaml:"-"` // 不从YAML加载
+	Sessions               []SessionInfo        `yaml:"sessions"`
+	SessionManager         SessionManagerConfig `yaml:"sessionManager"`
+	Address                string               `yaml:"address"`
+	APIKey                 string               `yaml:"apiKey"`
+	Proxy                  string               `yaml:"proxy"`
+	ChatDelete             bool                 `yaml:"chatDelete"`
+	MaxChatHistoryLength   int                  `yaml:"maxChatHistoryLength"`
+	RetryCount             int                  `yaml:"retryCount"`
+	NoRolePrefix           bool                 `yaml:"noRolePrefix"`
+	PromptDisableArtifacts bool                 `yaml:"promptDisableArtifacts"`
+	EnableMirrorApi        bool                 `yaml:"enableMirrorApi"`
+	MirrorApiPrefix        string               `yaml:"mirrorApiPrefix"`
+	RwMutx                 sync.RWMutex         `yaml:"-"` // 不从YAML加载
+	sessionManager         *SessionManager      `yaml:"-"` // SessionManager实例
+}
+
+// IsSessionManagerEnabled 检查SessionManager是否启用
+func (c *Config) IsSessionManagerEnabled() bool {
+	return c.SessionManager.Enabled && len(c.Sessions) > 0
+}
+
+// GetSessionManager 获取SessionManager实例
+func (c *Config) GetSessionManager() *SessionManager {
+	if c.sessionManager == nil && c.IsSessionManagerEnabled() {
+		c.sessionManager = NewSessionManager(c.Sessions, c.SessionManager)
+	}
+	return c.sessionManager
 }
 
 // 解析 SESSION 格式的环境变量
@@ -161,6 +217,16 @@ func loadConfigFromEnv() *Config {
 	config := &Config{
 		// 解析 SESSIONS 环境变量
 		Sessions: sessions,
+		 // SessionManager默认配置（禁用，保持向后兼容）
+		SessionManager: SessionManagerConfig{
+			Enabled:                false,
+			ScheduleStrategy:       "round_robin",
+			HealthCheckInterval:    30 * time.Second,
+			MinHealthScore:         0.5,
+			CircuitBreakerEnabled:  true,
+			MaxRetryAttempts:       3,
+			CooldownPeriods:        getDefaultCooldownPeriods(),
+		},
 		// 设置服务地址，默认为 "0.0.0.0:8080"
 		Address: os.Getenv("ADDRESS"),
 

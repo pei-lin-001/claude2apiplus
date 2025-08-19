@@ -72,8 +72,94 @@ func ChatCompletionsHandler(c *gin.Context) {
 
 	// Get model or use default
 	model := getModelOrDefault(req.Model)
+
+	// 检查是否启用智能Session管理器
+	if config.ConfigInstance.IsSessionManagerEnabled() {
+		handleIntelligentChatRequest(c, model, processor, req.Stream)
+	} else {
+		handleLegacyChatRequest(c, model, processor, req.Stream)
+	}
+}
+
+// handleIntelligentChatRequest 使用智能Session管理器处理请求
+func handleIntelligentChatRequest(c *gin.Context, model string, processor *utils.ChatRequestProcessor, stream bool) {
+	sessionManager := config.ConfigInstance.GetSessionManager()
+	
+	var lastError error
+	excludeKeys := make([]string, 0)
+	
+	// 智能重试循环
+	for attempt := 0; attempt < sessionManager.GetMaxRetryAttempts(); attempt++ {
+		// 智能选择最佳Session
+		sessionHealth, err := sessionManager.SelectBestSession(excludeKeys)
+		if err != nil {
+			logger.Error(fmt.Sprintf("Failed to select session: %v", err))
+			break
+		}
+		
+		// 转换为SessionInfo格式以兼容现有代码
+		session := config.SessionInfo{
+			SessionKey: sessionHealth.SessionKey,
+			OrgID:      sessionHealth.OrgID,
+		}
+		
+		logger.Info(fmt.Sprintf("Intelligent session selection: %s (health: %.2f, attempt: %d)", 
+			session.SessionKey[:12], sessionHealth.HealthScore, attempt+1))
+		
+		// 重置processor（如果是重试）
+		if attempt > 0 {
+			processor.Prompt.Reset()
+			processor.Prompt.WriteString(processor.RootPrompt.String())
+		}
+		
+		// 执行请求并收集详细结果
+		result := executeRequestWithMetrics(c, session, model, processor, stream)
+		
+		if result.Success {
+			// 记录成功
+			sessionManager.RecordSuccess(session.SessionKey, result.ResponseTime)
+			logger.Info(fmt.Sprintf("Request successful with session %s in %v", 
+				session.SessionKey[:12], result.ResponseTime))
+			return
+		}
+		
+		// 分析错误类型并更新Session状态
+		errorType := utils.ClassifyError(result.StatusCode, result.Error)
+		sessionManager.RecordError(session.SessionKey, errorType, result.Error)
+		
+		logger.Error(fmt.Sprintf("Request failed with session %s: %s (%s)", 
+			session.SessionKey[:12], utils.GetErrorDescription(errorType), result.Error))
+		
+		// 根据错误类型决定是否继续重试
+		if utils.ShouldStopRetry(errorType) {
+			logger.Info("Stopping retry due to non-recoverable error")
+			lastError = result.Error
+			break
+		}
+		
+		// 添加到排除列表，避免立即重试同一个session
+		excludeKeys = append(excludeKeys, session.SessionKey)
+		lastError = result.Error
+		
+		// 智能退避策略
+		if attempt < sessionManager.GetMaxRetryAttempts()-1 {
+			backoffDelay := utils.CalculateBackoffDelay(attempt, errorType, time.Second)
+			logger.Info(fmt.Sprintf("Backing off for %v before next attempt", backoffDelay))
+			time.Sleep(backoffDelay)
+		}
+	}
+	
+	// 所有重试失败后的处理
+	logger.Error(fmt.Sprintf("All intelligent retry attempts failed, last error: %v", lastError))
+	c.JSON(http.StatusInternalServerError, ErrorResponse{
+		Error: "Failed to process request after intelligent retry attempts"})
+}
+
+// handleLegacyChatRequest 使用原始逻辑处理请求（向后兼容）
+func handleLegacyChatRequest(c *gin.Context, model string, processor *utils.ChatRequestProcessor, stream bool) {
 	index := config.Sr.NextIndex()
-	// Attempt with retry mechanism
+	
+	// 原始重试逻辑
 	for i := 0; i < config.ConfigInstance.RetryCount; i++ {
 		index = (index + 1) % len(config.ConfigInstance.Sessions)
 		session, err := config.ConfigInstance.GetSessionForModel(index)
@@ -88,8 +174,9 @@ func ChatCompletionsHandler(c *gin.Context) {
 			processor.Prompt.Reset()
 			processor.Prompt.WriteString(processor.RootPrompt.String())
 		}
+		
 		// Initialize client and process request
-		if handleChatRequest(c, session, model, processor, req.Stream) {
+		if handleChatRequest(c, session, model, processor, stream) {
 			return // Success, exit the retry loop
 		}
 
@@ -100,6 +187,64 @@ func ChatCompletionsHandler(c *gin.Context) {
 	logger.Error("Failed for all retries")
 	c.JSON(http.StatusInternalServerError, ErrorResponse{
 		Error: "Failed to process request after multiple attempts"})
+}
+
+// executeRequestWithMetrics 执行请求并收集详细指标
+func executeRequestWithMetrics(c *gin.Context, session config.SessionInfo, model string, processor *utils.ChatRequestProcessor, stream bool) *utils.RequestResult {
+	startTime := time.Now()
+	
+	// Initialize the Claude client
+	claudeClient := core.NewClient(session.SessionKey, config.ConfigInstance.Proxy, model)
+
+	// Get org ID if not already set
+	if session.OrgID == "" {
+		orgId, err := claudeClient.GetOrgID()
+		if err != nil {
+			return utils.CreateErrorResult(500, err, time.Since(startTime))
+		}
+		session.OrgID = orgId
+		config.ConfigInstance.SetSessionOrgID(session.SessionKey, session.OrgID)
+	}
+
+	claudeClient.SetOrgID(session.OrgID)
+
+	// Upload images if any
+	if len(processor.ImgDataList) > 0 {
+		err := claudeClient.UploadFile(processor.ImgDataList)
+		if err != nil {
+			return utils.CreateErrorResult(500, err, time.Since(startTime))
+		}
+	}
+
+	// Handle large context if needed
+	if processor.Prompt.Len() > config.ConfigInstance.MaxChatHistoryLength {
+		claudeClient.SetBigContext(processor.Prompt.String())
+		processor.ResetForBigContext()
+		logger.Info(fmt.Sprintf("Prompt length exceeds max limit (%d), using file context", config.ConfigInstance.MaxChatHistoryLength))
+	}
+
+	// Create conversation
+	conversationID, err := claudeClient.CreateConversation()
+	if err != nil {
+		return utils.CreateErrorResult(500, err, time.Since(startTime))
+	}
+
+	// Send message
+	statusCode, err := claudeClient.SendMessage(conversationID, processor.Prompt.String(), stream, c)
+	responseTime := time.Since(startTime)
+	
+	if err != nil {
+		// Cleanup conversation asynchronously
+		go cleanupConversation(claudeClient, conversationID, 3)
+		return utils.CreateErrorResult(statusCode, err, responseTime)
+	}
+
+	// Clean up conversation if enabled
+	if config.ConfigInstance.ChatDelete {
+		go cleanupConversation(claudeClient, conversationID, 3)
+	}
+
+	return utils.CreateSuccessResult(statusCode, responseTime)
 }
 
 func MirrorChatHandler(c *gin.Context) {
