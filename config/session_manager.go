@@ -1,7 +1,6 @@
 package config
 
 import (
-	"fmt"
 	"math"
 	"sort"
 	"sync"
@@ -87,6 +86,15 @@ type SessionManager struct {
 	scheduler       ScheduleStrategy
 	stats           *ManagerStats
 	lastHealthCheck time.Time
+	startTime       time.Time
+}
+
+// CallRecord 调用记录
+type CallRecord struct {
+	SessionKey string    `json:"session_key"`
+	Timestamp  time.Time `json:"timestamp"`
+	Success    bool      `json:"success"`
+	Latency    time.Duration `json:"latency"`
 }
 
 // ManagerStats 管理器统计信息
@@ -100,6 +108,8 @@ type ManagerStats struct {
 	SessionsCooling  int                      `json:"sessions_cooling"`
 	SessionsFailed   int                      `json:"sessions_failed"`
 	LastReset        time.Time                `json:"last_reset"`
+	CallRecords      []CallRecord             `json:"call_records"`
+	CallCountByHour  map[string]int           `json:"call_count_by_hour"`
 	mu               sync.RWMutex             `json:"-"`
 }
 
@@ -115,10 +125,13 @@ func NewSessionManager(sessions []SessionInfo, config SessionManagerConfig) *Ses
 		sessions: make(map[string]*SessionHealth),
 		config:   config,
 		stats: &ManagerStats{
-			ErrorsByType: make(map[ErrorType]int64),
-			LastReset:    time.Now(),
+			ErrorsByType:    make(map[ErrorType]int64),
+			CallRecords:     make([]CallRecord, 0),
+			CallCountByHour: make(map[string]int),
+			LastReset:       time.Now(),
 		},
 		lastHealthCheck: time.Now(),
+		startTime:       time.Now(),
 	}
 
 	// 设置默认配置
@@ -137,7 +150,7 @@ func NewSessionManager(sessions []SessionInfo, config SessionManagerConfig) *Ses
 
 	// 初始化sessions
 	for _, session := range sessions {
-		sm.sessions[session.SessionKey] = &SessionHealth{
+		sessionHealth := &SessionHealth{
 			SessionKey:      session.SessionKey,
 			OrgID:           session.OrgID,
 			HealthScore:     1.0,
@@ -146,12 +159,18 @@ func NewSessionManager(sessions []SessionInfo, config SessionManagerConfig) *Ses
 			ErrorTypes:      make(map[ErrorType]int),
 			RecentErrors:    make([]ErrorRecord, 0, 10),
 			Weights:         1.0,
-			CircuitBreaker: &CircuitBreaker{
+		}
+		
+		// 只有在启用熔断器时才初始化熔断器
+		if config.CircuitBreakerEnabled {
+			sessionHealth.CircuitBreaker = &CircuitBreaker{
 				State:     CircuitClosed,
 				Threshold: 5,
 				Timeout:   60 * time.Second,
-			},
+			}
 		}
+		
+		sm.sessions[session.SessionKey] = sessionHealth
 	}
 
 	// 选择调度策略
@@ -178,6 +197,8 @@ func (sm *SessionManager) createScheduler() ScheduleStrategy {
 		return &HealthPriorityStrategy{}
 	case "weighted":
 		return &WeightedStrategy{}
+	case "adaptive":
+		return NewAdaptiveStrategy()
 	default:
 		return &RoundRobinStrategy{}
 	}
@@ -235,6 +256,13 @@ func (sm *SessionManager) RecordSuccess(sessionKey string, responseTime time.Dur
 	// 重置熔断器
 	if sm.config.CircuitBreakerEnabled && session.CircuitBreaker != nil {
 		sm.resetCircuitBreaker(session)
+	} else if sm.config.CircuitBreakerEnabled && session.CircuitBreaker == nil {
+		// 如果熔断器启用但为空，初始化熔断器
+		session.CircuitBreaker = &CircuitBreaker{
+			State:     CircuitClosed,
+			Threshold: 5,
+			Timeout:   60 * time.Second,
+		}
 	}
 
 	// 重新计算健康度
@@ -242,6 +270,9 @@ func (sm *SessionManager) RecordSuccess(sessionKey string, responseTime time.Dur
 
 	// 更新统计
 	sm.updateStats(true, responseTime, ErrorOther)
+	
+	// 记录调用记录
+	sm.addCallRecord(sessionKey, true, responseTime)
 }
 
 // RecordError 记录错误
@@ -279,6 +310,14 @@ func (sm *SessionManager) RecordError(sessionKey string, errorType ErrorType, er
 
 	// 更新熔断器
 	if sm.config.CircuitBreakerEnabled {
+		if session.CircuitBreaker == nil {
+			// 如果熔断器启用但为空，初始化熔断器
+			session.CircuitBreaker = &CircuitBreaker{
+				State:     CircuitClosed,
+				Threshold: 5,
+				Timeout:   60 * time.Second,
+			}
+		}
 		sm.updateCircuitBreaker(session)
 	}
 
@@ -287,6 +326,9 @@ func (sm *SessionManager) RecordError(sessionKey string, errorType ErrorType, er
 
 	// 更新统计
 	sm.updateStats(false, 0, errorType)
+	
+	// 记录调用记录
+	sm.addCallRecord(sessionKey, false, 0)
 }
 
 // updateHealthScore 更新健康度评分
@@ -478,16 +520,99 @@ func (sm *SessionManager) GetStats() *ManagerStats {
 	// 返回副本
 	statsCopy := *sm.stats
 	statsCopy.ErrorsByType = make(map[ErrorType]int64)
+	statsCopy.CallRecords = make([]CallRecord, len(sm.stats.CallRecords))
+	statsCopy.CallCountByHour = make(map[string]int)
+	
 	for k, v := range sm.stats.ErrorsByType {
 		statsCopy.ErrorsByType[k] = v
+	}
+	
+	copy(statsCopy.CallRecords, sm.stats.CallRecords)
+	for k, v := range sm.stats.CallCountByHour {
+		statsCopy.CallCountByHour[k] = v
 	}
 
 	return &statsCopy
 }
 
+// addCallRecord 添加调用记录
+func (sm *SessionManager) addCallRecord(sessionKey string, success bool, latency time.Duration) {
+	sm.stats.mu.Lock()
+	defer sm.stats.mu.Unlock()
+	
+	// 创建调用记录
+	record := CallRecord{
+		SessionKey: sessionKey,
+		Timestamp:  time.Now(),
+		Success:    success,
+		Latency:    latency,
+	}
+	
+	// 添加到调用记录列表
+	sm.stats.CallRecords = append(sm.stats.CallRecords, record)
+	
+	// 保持最近1000条记录
+	if len(sm.stats.CallRecords) > 1000 {
+		sm.stats.CallRecords = sm.stats.CallRecords[len(sm.stats.CallRecords)-1000:]
+	}
+	
+	// 更新按小时统计
+	hourKey := time.Now().Format("2006-01-02 15:00")
+	sm.stats.CallCountByHour[hourKey]++
+}
+
 // GetMaxRetryAttempts 获取最大重试次数
 func (sm *SessionManager) GetMaxRetryAttempts() int {
 	return sm.config.MaxRetryAttempts
+}
+
+// GetStartTime 获取启动时间
+func (sm *SessionManager) GetStartTime() time.Time {
+	return sm.startTime
+}
+
+// AddSession 动态添加新的session到SessionManager
+func (sm *SessionManager) AddSession(sessionInfo SessionInfo) {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+
+	// 检查session是否已存在
+	if _, exists := sm.sessions[sessionInfo.SessionKey]; exists {
+		return
+	}
+
+	// 创建新的session健康状态
+	sessionHealth := &SessionHealth{
+		SessionKey:      sessionInfo.SessionKey,
+		OrgID:           sessionInfo.OrgID,
+		HealthScore:     1.0,
+		Status:          StatusActive,
+		LastUsed:        time.Now(),
+		ErrorTypes:      make(map[ErrorType]int),
+		RecentErrors:    make([]ErrorRecord, 0, 10),
+		Weights:         1.0,
+	}
+	
+	// 只有在启用熔断器时才初始化熔断器
+	if sm.config.CircuitBreakerEnabled {
+		sessionHealth.CircuitBreaker = &CircuitBreaker{
+			State:     CircuitClosed,
+			Threshold: 5,
+			Timeout:   60 * time.Second,
+		}
+	}
+	
+	// 添加到sessions映射中
+	sm.sessions[sessionInfo.SessionKey] = sessionHealth
+}
+
+// RemoveSession 从SessionManager中移除session
+func (sm *SessionManager) RemoveSession(sessionKey string) {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+
+	// 从sessions映射中删除
+	delete(sm.sessions, sessionKey)
 }
 
 // IsSessionAvailable 检查session是否可用

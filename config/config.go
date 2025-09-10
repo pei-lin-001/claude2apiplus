@@ -50,7 +50,7 @@ type SessionInfo struct {
 	OrgID      string `yaml:"orgID"`
 }
 
-type SessionRagen struct {
+type SessionRange struct {
 	Index int
 	Mutex sync.Mutex
 }
@@ -86,6 +86,42 @@ type Config struct {
 // IsSessionManagerEnabled 检查SessionManager是否启用
 func (c *Config) IsSessionManagerEnabled() bool {
 	return c.SessionManager.Enabled && len(c.Sessions) > 0
+}
+
+// ValidateConfig 验证配置
+func (c *Config) ValidateConfig() error {
+	if len(c.Sessions) == 0 {
+		return fmt.Errorf("no sessions configured")
+	}
+	
+	for i, session := range c.Sessions {
+		if session.SessionKey == "" {
+			return fmt.Errorf("session %d has empty session key", i+1)
+		}
+	}
+	
+	if c.APIKey == "" {
+		return fmt.Errorf("API key is required")
+	}
+	
+	if c.SessionManager.Enabled {
+		if c.SessionManager.ScheduleStrategy != "round_robin" && 
+		   c.SessionManager.ScheduleStrategy != "health_priority" && 
+		   c.SessionManager.ScheduleStrategy != "weighted" &&
+		   c.SessionManager.ScheduleStrategy != "adaptive" {
+			return fmt.Errorf("invalid session manager strategy: %s", c.SessionManager.ScheduleStrategy)
+		}
+		
+		if c.SessionManager.MinHealthScore < 0 || c.SessionManager.MinHealthScore > 1 {
+			return fmt.Errorf("min health score must be between 0 and 1")
+		}
+		
+		if c.SessionManager.MaxRetryAttempts < 0 {
+			return fmt.Errorf("max retry attempts must be non-negative")
+		}
+	}
+	
+	return nil
 }
 
 // GetSessionManager 获取SessionManager实例
@@ -149,7 +185,7 @@ func (c *Config) SetSessionOrgID(sessionKey, orgID string) {
 		}
 	}
 }
-func (sr *SessionRagen) NextIndex() int {
+func (sr *SessionRange) NextIndex() int {
 	sr.Mutex.Lock()
 	defer sr.Mutex.Unlock()
 
@@ -214,17 +250,41 @@ func loadConfigFromEnv() *Config {
 		maxChatHistoryLength = 10000 // 默认值
 	}
 	retryCount, sessions := parseSessionEnv(os.Getenv("SESSIONS"))
+	
+	// 解析SessionManager环境变量
+	sessionManagerEnabled := os.Getenv("SESSION_MANAGER_ENABLED") == "true"
+	sessionManagerStrategy := os.Getenv("SESSION_MANAGER_STRATEGY")
+	if sessionManagerStrategy == "" {
+		sessionManagerStrategy = "round_robin"
+	}
+	
+	healthCheckInterval, err := time.ParseDuration(os.Getenv("HEALTH_CHECK_INTERVAL"))
+	if err != nil {
+		healthCheckInterval = 30 * time.Second
+	}
+	
+	minHealthScore, err := strconv.ParseFloat(os.Getenv("MIN_HEALTH_SCORE"), 64)
+	if err != nil {
+		minHealthScore = 0.5
+	}
+	
+	circuitBreakerEnabled := os.Getenv("CIRCUIT_BREAKER_ENABLED") != "false"
+	maxRetryAttempts, err := strconv.Atoi(os.Getenv("MAX_RETRY_ATTEMPTS"))
+	if err != nil {
+		maxRetryAttempts = 3
+	}
+	
 	config := &Config{
 		// 解析 SESSIONS 环境变量
 		Sessions: sessions,
-		 // SessionManager默认配置（禁用，保持向后兼容）
+		// SessionManager配置
 		SessionManager: SessionManagerConfig{
-			Enabled:                false,
-			ScheduleStrategy:       "round_robin",
-			HealthCheckInterval:    30 * time.Second,
-			MinHealthScore:         0.5,
-			CircuitBreakerEnabled:  true,
-			MaxRetryAttempts:       3,
+			Enabled:                sessionManagerEnabled,
+			ScheduleStrategy:       sessionManagerStrategy,
+			HealthCheckInterval:    healthCheckInterval,
+			MinHealthScore:         minHealthScore,
+			CircuitBreakerEnabled:  circuitBreakerEnabled,
+			MaxRetryAttempts:       maxRetryAttempts,
 			CooldownPeriods:        getDefaultCooldownPeriods(),
 		},
 		// 设置服务地址，默认为 "0.0.0.0:8080"
@@ -279,17 +339,24 @@ func LoadConfig() *Config {
 }
 
 var ConfigInstance *Config
-var Sr *SessionRagen
+var Sr *SessionRange
 
 func init() {
 	rand.Seed(time.Now().UnixNano())
 	// 加载环境变量
 	_ = godotenv.Load()
-	Sr = &SessionRagen{
+	Sr = &SessionRange{
 		Index: 0,
 		Mutex: sync.Mutex{},
 	}
 	ConfigInstance = LoadConfig()
+	
+	// 验证配置
+	if err := ConfigInstance.ValidateConfig(); err != nil {
+		logger.Error(fmt.Sprintf("Configuration validation failed: %v", err))
+		os.Exit(1)
+	}
+	
 	logger.Info("Loaded config:")
 	logger.Info(fmt.Sprintf("Max Retry count: %d", ConfigInstance.RetryCount))
 	for _, session := range ConfigInstance.Sessions {
@@ -304,4 +371,8 @@ func init() {
 	logger.Info(fmt.Sprintf("PromptDisableArtifacts: %t", ConfigInstance.PromptDisableArtifacts))
 	logger.Info(fmt.Sprintf("EnableMirrorApi: %t", ConfigInstance.EnableMirrorApi))
 	logger.Info(fmt.Sprintf("MirrorApiPrefix: %s", ConfigInstance.MirrorApiPrefix))
+	logger.Info(fmt.Sprintf("SessionManager Enabled: %t", ConfigInstance.SessionManager.Enabled))
+	logger.Info(fmt.Sprintf("SessionManager Strategy: %s", ConfigInstance.SessionManager.ScheduleStrategy))
+	logger.Info(fmt.Sprintf("SessionManager MinHealthScore: %f", ConfigInstance.SessionManager.MinHealthScore))
+	logger.Info(fmt.Sprintf("SessionManager MaxRetryAttempts: %d", ConfigInstance.SessionManager.MaxRetryAttempts))
 }
