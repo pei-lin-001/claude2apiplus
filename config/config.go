@@ -67,18 +67,22 @@ type SessionManagerConfig struct {
 }
 
 type Config struct {
-	Sessions               []SessionInfo        `yaml:"sessions"`
-	SessionManager         SessionManagerConfig `yaml:"sessionManager"`
-	Address                string               `yaml:"address"`
-	APIKey                 string               `yaml:"apiKey"`
-	Proxy                  string               `yaml:"proxy"`
-	ChatDelete             bool                 `yaml:"chatDelete"`
-	MaxChatHistoryLength   int                  `yaml:"maxChatHistoryLength"`
-	RetryCount             int                  `yaml:"retryCount"`
-	NoRolePrefix           bool                 `yaml:"noRolePrefix"`
-	PromptDisableArtifacts bool                 `yaml:"promptDisableArtifacts"`
+    Sessions               []SessionInfo        `yaml:"sessions"`
+    SessionManager         SessionManagerConfig `yaml:"sessionManager"`
+    Address                string               `yaml:"address"`
+    APIKey                 string               `yaml:"apiKey"`
+    Proxy                  string               `yaml:"proxy"`
+    CORSAllowedOrigins     []string             `yaml:"corsAllowedOrigins"`
+    ChatDelete             bool                 `yaml:"chatDelete"`
+    MaxChatHistoryLength   int                  `yaml:"maxChatHistoryLength"`
+    RetryCount             int                  `yaml:"retryCount"`
+    NoRolePrefix           bool                 `yaml:"noRolePrefix"`
+    PromptDisableArtifacts bool                 `yaml:"promptDisableArtifacts"`
 	EnableMirrorApi        bool                 `yaml:"enableMirrorApi"`
 	MirrorApiPrefix        string               `yaml:"mirrorApiPrefix"`
+	AdminUser              string               `yaml:"adminUser"`
+	AdminPassword          string               `yaml:"adminPassword"`
+	AdminSecret            string               `yaml:"adminSecret"`
 	RwMutx                 sync.RWMutex         `yaml:"-"` // 不从YAML加载
 	sessionManager         *SessionManager      `yaml:"-"` // SessionManager实例
 }
@@ -86,6 +90,30 @@ type Config struct {
 // IsSessionManagerEnabled 检查SessionManager是否启用
 func (c *Config) IsSessionManagerEnabled() bool {
 	return c.SessionManager.Enabled && len(c.Sessions) > 0
+}
+
+// GetAdminUser 获取管理员用户名
+func (c *Config) GetAdminUser() string {
+	if c.AdminUser == "" {
+		return "admin"
+	}
+	return c.AdminUser
+}
+
+// GetAdminPassword 获取管理员密码
+func (c *Config) GetAdminPassword() string {
+	if c.AdminPassword == "" {
+		return "admin123"
+	}
+	return c.AdminPassword
+}
+
+// GetAdminSecret 获取管理员JWT密钥
+func (c *Config) GetAdminSecret() string {
+	if c.AdminSecret == "" {
+		return "claude2api-admin-secret-key"
+	}
+	return c.AdminSecret
 }
 
 // ValidateConfig 验证配置
@@ -221,26 +249,31 @@ func configFileExists() (bool, string) {
 
 // 从YAML文件加载配置
 func loadConfigFromYAML(configPath string) (*Config, error) {
-	data, err := os.ReadFile(configPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read config file: %v", err)
-	}
+    data, err := os.ReadFile(configPath)
+    if err != nil {
+        return nil, fmt.Errorf("failed to read config file: %v", err)
+    }
 
-	var config Config
-	err = yaml.Unmarshal(data, &config)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse config file: %v", err)
-	}
+    var config Config
+    err = yaml.Unmarshal(data, &config)
+    if err != nil {
+        return nil, fmt.Errorf("failed to parse config file: %v", err)
+    }
 
-	// 设置读写锁（不从YAML加载）
-	config.RwMutx = sync.RWMutex{}
+    // 设置读写锁（不从YAML加载）
+    config.RwMutx = sync.RWMutex{}
 
-	// 如果地址为空，使用默认值
-	if config.Address == "" {
-		config.Address = "0.0.0.0:8080"
-	}
+    // 如果地址为空，使用默认值
+    if config.Address == "" {
+        config.Address = "0.0.0.0:8080"
+    }
 
-	return &config, nil
+    // CORS 允许来源默认值
+    if len(config.CORSAllowedOrigins) == 0 {
+        config.CORSAllowedOrigins = []string{"*"}
+    }
+
+    return &config, nil
 }
 
 // 从环境变量加载配置
@@ -274,11 +307,11 @@ func loadConfigFromEnv() *Config {
 		maxRetryAttempts = 3
 	}
 	
-	config := &Config{
-		// 解析 SESSIONS 环境变量
-		Sessions: sessions,
-		// SessionManager配置
-		SessionManager: SessionManagerConfig{
+    config := &Config{
+        // 解析 SESSIONS 环境变量
+        Sessions: sessions,
+        // SessionManager配置
+        SessionManager: SessionManagerConfig{
 			Enabled:                sessionManagerEnabled,
 			ScheduleStrategy:       sessionManagerStrategy,
 			HealthCheckInterval:    healthCheckInterval,
@@ -287,18 +320,37 @@ func loadConfigFromEnv() *Config {
 			MaxRetryAttempts:       maxRetryAttempts,
 			CooldownPeriods:        getDefaultCooldownPeriods(),
 		},
-		// 设置服务地址，默认为 "0.0.0.0:8080"
-		Address: os.Getenv("ADDRESS"),
+        // 设置服务地址，默认为 "0.0.0.0:8080"
+        Address: os.Getenv("ADDRESS"),
 
-		// 设置 API 认证密钥
-		APIKey: os.Getenv("APIKEY"),
-		// 设置代理地址
-		Proxy: os.Getenv("PROXY"),
-		// 自动删除聊天
-		ChatDelete: os.Getenv("CHAT_DELETE") != "false",
-		// 设置最大聊天历史长度
-		MaxChatHistoryLength: maxChatHistoryLength,
-		// 设置重试次数
+        // 设置 API 认证密钥
+        APIKey: os.Getenv("APIKEY"),
+        // 设置代理地址
+        Proxy: os.Getenv("PROXY"),
+        // CORS 允许来源，逗号分隔，默认 *
+        CORSAllowedOrigins: func() []string {
+            v := os.Getenv("CORS_ORIGINS")
+            if strings.TrimSpace(v) == "" {
+                return []string{"*"}
+            }
+            parts := strings.Split(v, ",")
+            outs := make([]string, 0, len(parts))
+            for _, p := range parts {
+                s := strings.TrimSpace(p)
+                if s != "" {
+                    outs = append(outs, s)
+                }
+            }
+            if len(outs) == 0 {
+                return []string{"*"}
+            }
+            return outs
+        }(),
+        // 自动删除聊天
+        ChatDelete: os.Getenv("CHAT_DELETE") != "false",
+        // 设置最大聊天历史长度
+        MaxChatHistoryLength: maxChatHistoryLength,
+        // 设置重试次数
 		RetryCount: retryCount,
 		// 设置是否使用角色前缀
 		NoRolePrefix: os.Getenv("NO_ROLE_PREFIX") == "true",
@@ -308,6 +360,10 @@ func loadConfigFromEnv() *Config {
 		EnableMirrorApi: os.Getenv("ENABLE_MIRROR_API") == "true",
 		// 设置镜像API前缀
 		MirrorApiPrefix: os.Getenv("MIRROR_API_PREFIX"),
+		// 设置管理员凭据
+		AdminUser: os.Getenv("ADMIN_USER"),
+		AdminPassword: os.Getenv("ADMIN_PASSWORD"),
+		AdminSecret: os.Getenv("ADMIN_SECRET"),
 		// 设置读写锁
 		RwMutx: sync.RWMutex{},
 	}
@@ -357,22 +413,33 @@ func init() {
 		os.Exit(1)
 	}
 	
-	logger.Info("Loaded config:")
-	logger.Info(fmt.Sprintf("Max Retry count: %d", ConfigInstance.RetryCount))
-	for _, session := range ConfigInstance.Sessions {
-		logger.Info(fmt.Sprintf("Session: %s, OrgID: %s", session.SessionKey, session.OrgID))
-	}
-	logger.Info(fmt.Sprintf("Address: %s", ConfigInstance.Address))
-	logger.Info(fmt.Sprintf("APIKey: %s", ConfigInstance.APIKey))
-	logger.Info(fmt.Sprintf("Proxy: %s", ConfigInstance.Proxy))
-	logger.Info(fmt.Sprintf("ChatDelete: %t", ConfigInstance.ChatDelete))
-	logger.Info(fmt.Sprintf("MaxChatHistoryLength: %d", ConfigInstance.MaxChatHistoryLength))
-	logger.Info(fmt.Sprintf("NoRolePrefix: %t", ConfigInstance.NoRolePrefix))
-	logger.Info(fmt.Sprintf("PromptDisableArtifacts: %t", ConfigInstance.PromptDisableArtifacts))
-	logger.Info(fmt.Sprintf("EnableMirrorApi: %t", ConfigInstance.EnableMirrorApi))
-	logger.Info(fmt.Sprintf("MirrorApiPrefix: %s", ConfigInstance.MirrorApiPrefix))
-	logger.Info(fmt.Sprintf("SessionManager Enabled: %t", ConfigInstance.SessionManager.Enabled))
-	logger.Info(fmt.Sprintf("SessionManager Strategy: %s", ConfigInstance.SessionManager.ScheduleStrategy))
-	logger.Info(fmt.Sprintf("SessionManager MinHealthScore: %f", ConfigInstance.SessionManager.MinHealthScore))
-	logger.Info(fmt.Sprintf("SessionManager MaxRetryAttempts: %d", ConfigInstance.SessionManager.MaxRetryAttempts))
+    logger.Info("Loaded config:")
+    logger.Info(fmt.Sprintf("Max Retry count: %d", ConfigInstance.RetryCount))
+    for _, session := range ConfigInstance.Sessions {
+        masked := logger.MaskSecret(session.SessionKey)
+        logger.Info(fmt.Sprintf("Session: %s, OrgID: %s", masked, session.OrgID))
+    }
+    logger.Info(fmt.Sprintf("Address: %s", ConfigInstance.Address))
+    if ConfigInstance.APIKey != "" {
+        logger.Info(fmt.Sprintf("APIKey: %s", logger.MaskSecret(ConfigInstance.APIKey)))
+    }
+    if ConfigInstance.Proxy != "" {
+        logger.Info(fmt.Sprintf("Proxy: %s", ConfigInstance.Proxy))
+    }
+    logger.Info(fmt.Sprintf("ChatDelete: %t", ConfigInstance.ChatDelete))
+    logger.Info(fmt.Sprintf("MaxChatHistoryLength: %d", ConfigInstance.MaxChatHistoryLength))
+    logger.Info(fmt.Sprintf("NoRolePrefix: %t", ConfigInstance.NoRolePrefix))
+    logger.Info(fmt.Sprintf("PromptDisableArtifacts: %t", ConfigInstance.PromptDisableArtifacts))
+    logger.Info(fmt.Sprintf("EnableMirrorApi: %t", ConfigInstance.EnableMirrorApi))
+    logger.Info(fmt.Sprintf("MirrorApiPrefix: %s", ConfigInstance.MirrorApiPrefix))
+    logger.Info(fmt.Sprintf("CORS Allowed Origins: %v", ConfigInstance.CORSAllowedOrigins))
+    logger.Info(fmt.Sprintf("SessionManager Enabled: %t", ConfigInstance.SessionManager.Enabled))
+    logger.Info(fmt.Sprintf("SessionManager Strategy: %s", ConfigInstance.SessionManager.ScheduleStrategy))
+    logger.Info(fmt.Sprintf("SessionManager MinHealthScore: %f", ConfigInstance.SessionManager.MinHealthScore))
+    logger.Info(fmt.Sprintf("SessionManager MaxRetryAttempts: %d", ConfigInstance.SessionManager.MaxRetryAttempts))
+
+    // 提示默认管理员凭据风险
+    if ConfigInstance.GetAdminUser() == "admin" && ConfigInstance.GetAdminPassword() == "admin123" {
+        logger.Warn("Admin credentials are default values; please change in production")
+    }
 }

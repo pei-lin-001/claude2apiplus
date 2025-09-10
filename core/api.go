@@ -189,7 +189,7 @@ func (c *Client) CreateConversation() (string, error) {
 	if err := json.Unmarshal(resp.Bytes(), &result); err != nil {
 		return "", fmt.Errorf("failed to parse response: %w", err)
 	}
-	logger.Info(fmt.Sprintf("create conversation response: %s", resp.String()))
+    // response contains sensitive details; avoid logging full body
 	uuid, ok := result["uuid"].(string)
 	if !ok {
 		return "", errors.New("conversation UUID not found in response")

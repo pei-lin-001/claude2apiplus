@@ -1,11 +1,11 @@
 package logger
 
 import (
-	"fmt"
-	"os"
-	"time"
+    "fmt"
+    "os"
+    "time"
 
-	"github.com/fatih/color"
+    "github.com/fatih/color"
 )
 
 // 日志级别
@@ -100,5 +100,23 @@ func Error(format string, args ...interface{}) {
 
 // Fatal 打印致命错误日志并退出程序
 func Fatal(format string, args ...interface{}) {
-	log(FATAL, format, args...)
+    log(FATAL, format, args...)
+}
+
+// MaskSecret 对敏感信息做脱敏处理，仅保留前后若干位
+func MaskSecret(s string) string {
+    if s == "" {
+        return ""
+    }
+    // 极短字符串直接全掩码
+    if len(s) <= 8 {
+        return "****"
+    }
+    start := 4
+    end := 4
+    if len(s) < start+end {
+        start = len(s) / 2
+        end = len(s) - start
+    }
+    return fmt.Sprintf("%s...%s", s[:start], s[len(s)-end:])
 }

@@ -2,6 +2,8 @@ import { useEffect } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { useChatStore } from '@/stores/chat';
 import Layout from '@/components/layout/Layout';
+import { ProtectedRoute } from '@/components/auth/ProtectedRoute';
+import LoginPage from '@/pages/LoginPage';
 import SessionManager from '@/pages/SessionManager';
 import StatisticsPage from '@/pages/StatisticsPage';
 import SettingsPage from '@/pages/SettingsPage';
@@ -19,14 +21,45 @@ function App() {
   }, [darkMode]);
 
   return (
-    <Layout>
+    <>
       <Routes>
-        <Route path="/" element={<Navigate to="/sessions" replace />} />
-        <Route path="/sessions" element={<SessionManager />} />
-        <Route path="/statistics" element={<StatisticsPage />} />
-        <Route path="/settings" element={<SettingsPage />} />
+        <Route path="/login" element={<LoginPage />} />
+        <Route
+          path="/*"
+          element={
+            <Layout>
+              <Routes>
+                <Route path="/" element={<Navigate to="/sessions" replace />} />
+                <Route
+                  path="/sessions"
+                  element={
+                    <ProtectedRoute>
+                      <SessionManager />
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
+                  path="/statistics"
+                  element={
+                    <ProtectedRoute>
+                      <StatisticsPage />
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
+                  path="/settings"
+                  element={
+                    <ProtectedRoute>
+                      <SettingsPage />
+                    </ProtectedRoute>
+                  }
+                />
+              </Routes>
+            </Layout>
+          }
+        />
       </Routes>
-    </Layout>
+    </>
   );
 }
 

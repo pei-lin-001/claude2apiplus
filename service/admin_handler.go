@@ -2,6 +2,7 @@ package service
 
 import (
 	"claude2api/config"
+	"claude2api/middleware"
 	"fmt"
 	"net/http"
 	"regexp"
@@ -11,10 +12,32 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// formatDuration 格式化持续时间为秒级精度
+// formatDuration 格式化持续时间为天、小时、分钟、秒
 func formatDuration(d time.Duration) string {
 	seconds := int(d.Seconds())
-	return fmt.Sprintf("%ds", seconds)
+	
+	if seconds < 60 {
+		return fmt.Sprintf("%ds", seconds)
+	}
+	
+	minutes := seconds / 60
+	seconds = seconds % 60
+	
+	if minutes < 60 {
+		return fmt.Sprintf("%dm %ds", minutes, seconds)
+	}
+	
+	hours := minutes / 60
+	minutes = minutes % 60
+	
+	if hours < 24 {
+		return fmt.Sprintf("%dh %dm %ds", hours, minutes, seconds)
+	}
+	
+	days := hours / 24
+	hours = hours % 24
+	
+	return fmt.Sprintf("%dd %dh %dm %ds", days, hours, minutes, seconds)
 }
 
 // SessionsHealthHandler 获取所有session的健康状态
@@ -407,4 +430,58 @@ func isValidSessionKey(sessionKey string) bool {
 	}
 	
 	return true
+}
+
+// AdminLoginHandler 管理员登录
+func AdminLoginHandler(c *gin.Context) {
+	var req struct {
+		Username string `json:"username" binding:"required"`
+		Password string `json:"password" binding:"required"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request format"})
+		return
+	}
+
+	// 验证管理员凭据
+	if !middleware.ValidateAdminCredentials(req.Username, req.Password) {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid username or password"})
+		return
+	}
+
+	// 生成JWT token
+	token, err := middleware.GenerateAdminToken(req.Username)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate token"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Login successful",
+		"token":   token,
+		"user": gin.H{
+			"username": req.Username,
+		},
+	})
+}
+
+// AdminLogoutHandler 管理员登出
+func AdminLogoutHandler(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Logout successful",
+	})
+}
+
+// GetAdminInfoHandler 获取当前管理员信息
+func GetAdminInfoHandler(c *gin.Context) {
+	username, exists := c.Get("admin_user")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not authenticated"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"username": username,
+	})
 }

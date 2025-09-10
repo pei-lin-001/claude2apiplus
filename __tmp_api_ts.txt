@@ -12,7 +12,7 @@ class ApiService {
       timeout: 30000,
     });
 
-    // 请求拦截器
+    // 请求拦截�?
     this.api.interceptors.request.use(
       (config) => {
         // For admin routes, use API key
@@ -37,7 +37,7 @@ class ApiService {
       (error) => Promise.reject(error)
     );
 
-    // 响应拦截器
+    // 响应拦截�?
     this.api.interceptors.response.use(
       (response) => response,
       (error) => {
@@ -148,7 +148,7 @@ class ApiService {
     }
   }
 
-  // 获取会话健康状态
+  // 获取会话健康状�?
   async getSessionHealth(): Promise<SessionHealth[]> {
     const response = await this.api.get('/admin/sessions');
     return response.data;
@@ -166,13 +166,13 @@ class ApiService {
     return response.data;
   }
 
-  // 健康检查
+  // 健康检�?
   async healthCheck() {
     const response = await this.api.get('/health');
     return response.data;
   }
 
-  // 管理员登出
+  // 管理员登�?
   async adminLogout() {
     const response = await this.api.post('/admin/logout');
     return response.data;
@@ -188,3 +188,4 @@ export const apiService = new ApiService();
 
 // 导出默认实例用于组件使用
 export const api = apiService.getInstance();
+

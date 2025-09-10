@@ -16,7 +16,6 @@ import {
   Key,
   Moon,
   Sun,
-  Zap,
   Shield,
   Database,
   Globe,

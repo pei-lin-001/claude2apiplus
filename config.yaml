@@ -1,0 +1,42 @@
+# Claude2Api+ 测试配置
+
+# Session 配置 - 请替换为真实的 Claude Session
+sessions:
+  - sessionKey: "sk-ant-sid01-your-session-key-here"
+    orgID: "your-org-id-here"
+
+# Session 管理器配置
+sessionManager:
+  enabled: true
+  scheduleStrategy: "round_robin"
+  healthCheckInterval: 30s
+  minHealthScore: 0.5
+  circuitBreakerEnabled: true
+  maxRetryAttempts: 3
+  cooldownPeriods:
+    rate_limit: 5m
+    auth: 10m
+    server: 2m
+    network: 1m
+    timeout: 30s
+
+# 服务配置
+address: "0.0.0.0:8080"
+apiKey: "test-api-key-123"
+proxy: ""
+
+# 管理员配置
+adminUser: "admin"
+adminPassword: "admin123"
+adminSecret: "claude2api-admin-secret-key"
+
+# 聊天配置
+chatDelete: true
+maxChatHistoryLength: 10000
+retryCount: 3
+noRolePrefix: false
+promptDisableArtifacts: false
+
+# 镜像 API 配置
+enableMirrorApi: false
+mirrorApiPrefix: "/mirror"

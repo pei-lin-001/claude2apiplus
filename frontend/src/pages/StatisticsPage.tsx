@@ -13,8 +13,6 @@ import {
   Clock,
   CheckCircle,
   XCircle,
-  Wifi,
-  WifiOff,
   Globe,
   Heart,
   History,
@@ -23,6 +21,7 @@ import {
 import { SessionHealth, SystemStats } from '@/types';
 import { SessionStatusChart, ResponseTimeChart, SuccessRateChart, HealthScoreChart, CallCountChart, CallRecordsTable, ErrorTypeChart, CircuitBreakerChart, CooldownTimer, WeightInfo, StrategyComparison } from '@/components/ui/charts';
 import { useWebSocket } from '@/hooks/useWebSocket';
+import { apiService } from '@/services/api';
 
 const StatisticsPage: React.FC = () => {
   const [stats, setStats] = useState<SystemStats | null>(null);
@@ -34,13 +33,18 @@ const StatisticsPage: React.FC = () => {
   const [currentStrategy, setCurrentStrategy] = useState<string>('round_robin');
 
   const handleWsMessage = useCallback((data: any) => {
-    if (data.type === 'stats_update') setStats(data.stats);
-    if (data.type === 'sessions_update') setSessions(data.sessions);
+    if (data.type === 'stats_update') setStats(data.data ?? data.stats);
+    if (data.type === 'sessions_update') setSessions(data.data ?? data.sessions);
     setLastUpdate(new Date());
   }, []);
 
   useWebSocket({
-    url: `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/ws`,
+    url: (() => {
+      const base = `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}`
+      const apiKey = localStorage.getItem('apiKey') || 'test-api-key-123'
+      const token = encodeURIComponent(apiKey)
+      return `${base}/ws?token=${token}`
+    })(),
     onMessage: handleWsMessage,
     onOpen: () => setWsConnected(true),
     onClose: () => setWsConnected(false),
@@ -51,18 +55,10 @@ const StatisticsPage: React.FC = () => {
     setLoading(true);
     setError(null);
     try {
-      const apiKey = localStorage.getItem('apiKey') || 'test-api-key-123';
-      const headers = { Authorization: `Bearer ${apiKey}` } as Record<string, string>;
-      const [statsResponse, sessionsResponse, configResponse] = await Promise.all([
-        fetch('/admin/stats', { headers }),
-        fetch('/admin/sessions', { headers }),
-        fetch('/admin/config', { headers }),
-      ]);
-      if (!statsResponse.ok || !sessionsResponse.ok || !configResponse.ok) throw new Error('Failed to fetch data');
       const [statsData, sessionsData, configData] = await Promise.all([
-        statsResponse.json(), 
-        sessionsResponse.json(), 
-        configResponse.json()
+        apiService.getSystemStats(),
+        apiService.getSessionHealth(),
+        apiService.getConfig(),
       ]);
       setStats(statsData);
       setSessions(sessionsData);

@@ -8,6 +8,12 @@ claude2api.exe
 server.exe
 *.exe
 
+# Frontend build and deps
+frontend/node_modules/
+frontend/dist/
+node_modules/
+dist/
+
 # Test files
 test_session_manager.go
 .nul

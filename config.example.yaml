@@ -28,6 +28,15 @@ address: "0.0.0.0:8080"  # 监听地址
 apiKey: "your-api-key-here"  # 管理 API 密钥
 proxy: ""  # 代理服务器地址
 
+# CORS 配置（允许的来源，* 表示全部；建议在生产中明确列出域名）
+corsAllowedOrigins:
+  - "*"
+
+# 管理员配置
+adminUser: "admin"  # 管理员用户名
+adminPassword: "admin123"  # 管理员密码
+adminSecret: "your-jwt-secret-key-here"  # JWT 密钥，请修改为强密码
+
 # 聊天配置
 chatDelete: true  # 自动删除聊天记录
 maxChatHistoryLength: 10000  # 最大聊天历史长度

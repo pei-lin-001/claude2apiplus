@@ -1,24 +1,37 @@
 package service
 
 import (
-	"claude2api/config"
-	"log"
-	"net/http"
-	"sync"
-	"time"
+    "claude2api/config"
+    "log"
+    "net/http"
+    "sync"
+    "time"
 
-	"github.com/gin-gonic/gin"
-	"github.com/gorilla/websocket"
+    "github.com/gin-gonic/gin"
+    "github.com/gorilla/websocket"
 )
 
 var (
-	upgrader = websocket.Upgrader{
-		CheckOrigin: func(r *http.Request) bool {
-			return true // Allow all origins in development
-		},
-		ReadBufferSize:  1024,
-		WriteBufferSize: 1024,
-	}
+    upgrader = websocket.Upgrader{
+        CheckOrigin: func(r *http.Request) bool {
+            origins := config.ConfigInstance.CORSAllowedOrigins
+            if len(origins) == 0 || (len(origins) == 1 && origins[0] == "*") {
+                return true
+            }
+            reqOrigin := r.Header.Get("Origin")
+            if reqOrigin == "" {
+                return false
+            }
+            for _, o := range origins {
+                if o == reqOrigin {
+                    return true
+                }
+            }
+            return false
+        },
+        ReadBufferSize:  1024,
+        WriteBufferSize: 1024,
+    }
 )
 
 type WebSocketMessage struct {

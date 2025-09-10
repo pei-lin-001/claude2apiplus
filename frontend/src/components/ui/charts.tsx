@@ -344,7 +344,7 @@ interface ErrorTypeChartProps {
 
 export const ErrorTypeChart: React.FC<ErrorTypeChartProps> = ({ error_types }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const chartRef = useRef<Chart | null>(null);
+  const chartRef = useRef<ChartJS | null>(null);
 
   useEffect(() => {
     if (!canvasRef.current) return;
@@ -378,7 +378,7 @@ export const ErrorTypeChart: React.FC<ErrorTypeChartProps> = ({ error_types }) =
       '#6b7280'  // gray - other
     ];
 
-    chartRef.current = new Chart(ctx, {
+    chartRef.current = new ChartJS(ctx, {
       type: 'doughnut',
       data: {
         labels: labels,
@@ -403,7 +403,7 @@ export const ErrorTypeChart: React.FC<ErrorTypeChartProps> = ({ error_types }) =
           },
           tooltip: {
             callbacks: {
-              label: function(context) {
+              label: function(context: any) {
                 const label = context.label || '';
                 const value = context.parsed || 0;
                 const total = context.dataset.data.reduce((a: number, b: number) => a + b, 0);

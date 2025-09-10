@@ -103,8 +103,8 @@ func handleIntelligentChatRequest(c *gin.Context, model string, processor *utils
 			OrgID:      sessionHealth.OrgID,
 		}
 		
-		logger.Info(fmt.Sprintf("Intelligent session selection: %s (health: %.2f, attempt: %d)", 
-			session.SessionKey[:12], sessionHealth.HealthScore, attempt+1))
+        logger.Info(fmt.Sprintf("Intelligent session selection: %s (health: %.2f, attempt: %d)", 
+            logger.MaskSecret(session.SessionKey), sessionHealth.HealthScore, attempt+1))
 		
 		// 重置processor（如果是重试）
 		if attempt > 0 {
@@ -118,8 +118,8 @@ func handleIntelligentChatRequest(c *gin.Context, model string, processor *utils
 		if result.Success {
 			// 记录成功
 			sessionManager.RecordSuccess(session.SessionKey, result.ResponseTime)
-			logger.Info(fmt.Sprintf("Request successful with session %s in %v", 
-				session.SessionKey[:12], result.ResponseTime))
+            logger.Info(fmt.Sprintf("Request successful with session %s in %v", 
+                logger.MaskSecret(session.SessionKey), result.ResponseTime))
 			return
 		}
 		
@@ -127,8 +127,8 @@ func handleIntelligentChatRequest(c *gin.Context, model string, processor *utils
 		errorType := utils.ClassifyError(result.StatusCode, result.Error)
 		sessionManager.RecordError(session.SessionKey, errorType, result.Error)
 		
-		logger.Error(fmt.Sprintf("Request failed with session %s: %s (%s)", 
-			session.SessionKey[:12], utils.GetErrorDescription(errorType), result.Error))
+        logger.Error(fmt.Sprintf("Request failed with session %s: %s (%s)", 
+            logger.MaskSecret(session.SessionKey), utils.GetErrorDescription(errorType), result.Error))
 		
 		// 根据错误类型决定是否继续重试
 		if utils.ShouldStopRetry(errorType) {
@@ -169,7 +169,7 @@ func handleLegacyChatRequest(c *gin.Context, model string, processor *utils.Chat
 			continue
 		}
 
-		logger.Info(fmt.Sprintf("Using session for model %s: %s", model, session.SessionKey))
+        logger.Info(fmt.Sprintf("Using session for model %s: %s", model, logger.MaskSecret(session.SessionKey)))
 		if i > 0 {
 			processor.Prompt.Reset()
 			processor.Prompt.WriteString(processor.RootPrompt.String())
@@ -400,5 +400,5 @@ func cleanupConversation(client *core.Client, conversationID string, retry int) 
 		return // 成功后直接返回，不执行后面的错误日志
 	}
 	// 只有当所有重试都失败后，才会执行到这里
-	logger.Error(fmt.Sprintf("Cleanup %s conversation %s failed after %d retries", client.SessionKey, conversationID, retry))
+    logger.Error(fmt.Sprintf("Cleanup %s conversation %s failed after %d retries", logger.MaskSecret(client.SessionKey), conversationID, retry))
 }

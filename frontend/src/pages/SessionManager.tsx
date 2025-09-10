@@ -14,10 +14,8 @@ import {
   Save, 
   X,
   CheckCircle,
-  Clock,
   Zap,
-  Users,
-  Settings
+  Users
 } from 'lucide-react';
 import { SessionCardSkeleton } from '@/components/ui/skeleton';
 
@@ -221,6 +219,8 @@ const SessionManager: React.FC = () => {
         return <Badge className="bg-green-100 text-green-800 border-green-200">活跃</Badge>;
       case 'cooling':
         return <Badge className="bg-yellow-100 text-yellow-800 border-yellow-200">冷却中</Badge>;
+      case 'unknown':
+        return <Badge className="bg-gray-100 text-gray-800 border-gray-200">未知</Badge>;
       case 'failed':
         return <Badge className="bg-red-100 text-red-800 border-red-200">失败</Badge>;
       case 'circuit_open':
@@ -424,7 +424,7 @@ const SessionManager: React.FC = () => {
                           <h3 className="font-mono text-sm bg-gray-100 dark:bg-gray-700 px-3 py-1 rounded-md">
                             {maskSessionKey(session.sessionKey)}
                           </h3>
-                          {getStatusBadge(session.status)}
+                          {getStatusBadge(session.status || 'unknown')}
                         </div>
                       </div>
 
