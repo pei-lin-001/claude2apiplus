@@ -1,0 +1,40 @@
+# Claude2Api+ 配置文件示例
+# 复制此文件为 config.yaml 或设置环境变量
+
+# Session 配置
+sessions:
+  - sessionKey: "sk-ant-sid01-your-session-key-here"
+    orgID: "your-org-id-here"
+  - sessionKey: "sk-ant-sid01-another-session-key"
+    orgID: ""
+
+# Session 管理器配置
+sessionManager:
+  enabled: true  # 启用 Session 管理器
+  scheduleStrategy: "round_robin"  # 调度策略: round_robin, health_priority, weighted
+  healthCheckInterval: 30s  # 健康检查间隔
+  minHealthScore: 0.5  # 最小健康分数
+  circuitBreakerEnabled: true  # 启用熔断器
+  maxRetryAttempts: 3  # 最大重试次数
+  cooldownPeriods:
+    rate_limit: 5m
+    auth: 10m
+    server: 2m
+    network: 1m
+    timeout: 30s
+
+# 服务配置
+address: "0.0.0.0:8080"  # 监听地址
+apiKey: "your-api-key-here"  # 管理 API 密钥
+proxy: ""  # 代理服务器地址
+
+# 聊天配置
+chatDelete: true  # 自动删除聊天记录
+maxChatHistoryLength: 10000  # 最大聊天历史长度
+retryCount: 3  # 重试次数
+noRolePrefix: false  # 禁用角色前缀
+promptDisableArtifacts: false  # 禁用提示词 artifacts
+
+# 镜像 API 配置
+enableMirrorApi: false  # 启用镜像 API
+mirrorApiPrefix: "/mirror"  # 镜像 API 前缀

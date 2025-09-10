@@ -25,7 +25,7 @@ func HealthCheckHandler(c *gin.Context) {
 	})
 }
 
-func MoudlesHandler(c *gin.Context) {
+func ModelsHandler(c *gin.Context) {
 	models := []map[string]interface{}{
 		{"id": "claude-3-7-sonnet-20250219"},
 		{"id": "claude-sonnet-4-20250514"},
